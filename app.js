@@ -10,6 +10,13 @@
   const XP = { brief: 40, quizQ: 20, simPt: 10, signal: 5, jargon: 5, exam: 200, sortCap: 150 };
   const EXAM_LEN = 15, EXAM_PASS = 12, SORT_SECONDS = 45;
 
+  // Team leaderboard (Supabase). The key below is a publishable key, safe to ship in a browser:
+  // the table is private and only reachable through two database functions.
+  const BOARD = {
+    url: "https://mqksikjcudxmoejpmijc.supabase.co/rest/v1/rpc/",
+    key: "sb_publishable_xV1U1tDghZyEeIZwJ_2uLw_6Hhst6as"
+  };
+
   const $ = (s, r) => (r || document).querySelector(s);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -19,13 +26,46 @@
   /* ---------- state ---------- */
 
   function blank() {
-    return { name: "", xp: 0, briefed: {}, quiz: {}, sim: {}, signal: 0, sort: 0, jargon: {}, exam: { best: 0, passed: "" }, badges: {}, last: "", streak: 0 };
+    return { name: "", xp: 0, briefed: {}, quiz: {}, sim: {}, signal: 0, sort: 0, jargon: {}, exam: { best: 0, passed: "" }, badges: {}, last: "", streak: 0, key: "" };
   }
   function load() {
     try { const raw = localStorage.getItem(KEY); if (raw) return Object.assign(blank(), JSON.parse(raw)); } catch (e) { /* storage unavailable */ }
     return blank();
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* storage unavailable */ } }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* storage unavailable */ } queueSync(); }
+
+  /* ---------- leaderboard sync ---------- */
+
+  function uuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 3) | 8).toString(16); });
+  }
+  function rpc(fn, body) {
+    return fetch(BOARD.url + fn, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: BOARD.key, Authorization: "Bearer " + BOARD.key },
+      body: JSON.stringify(body)
+    }).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.status === 204 ? null : r.json(); });
+  }
+  let syncTimer = null, lastSent = "", board = { rows: null, error: false, loading: false };
+  function queueSync() {
+    if (!S.name) return;                       // nothing is sent until the person gives a name
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, 1200);
+  }
+  function syncNow() {
+    if (!S.name) return Promise.resolve();
+    if (!S.key) { S.key = uuid(); try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* storage unavailable */ } }
+    const body = {
+      p_key: S.key, p_name: S.name, p_xp: S.xp,
+      p_modules: MODULES.filter(m => S.quiz[m.id] >= 3).length,
+      p_badges: Object.keys(S.badges).length,
+      p_exam: S.exam.best, p_certified: S.exam.passed || null
+    };
+    const sig = JSON.stringify(body);
+    if (sig === lastSent) return Promise.resolve();
+    return rpc("ai_academy_submit", body).then(() => { lastSent = sig; }, () => { /* offline or blocked: retry on next save */ });
+  }
 
   let S = load();
   let G = null;          // transient state for the current activity
@@ -115,7 +155,7 @@
     const r = route();
     const [head, ...rest] = r.split("-");
     const arg = rest.join("-");
-    const views = { learn: vLearn, play: vPlay, kit: vKit, me: vMe, m: vBrief, q: vQuiz, sim: vSim, signal: vSignal, sort: vSort, jargon: vJargon, exam: vExam };
+    const views = { learn: vLearn, play: vPlay, kit: vKit, me: vMe, m: vBrief, q: vQuiz, sim: vSim, signal: vSignal, sort: vSort, jargon: vJargon, exam: vExam, board: vBoard };
     const fn = views[head] || vLearn;
     renderHeader(head);
     const view = $("#view");
@@ -128,8 +168,8 @@
   function renderHeader(head) {
     const ri = rankIndex(S.xp), cur = RANKS[ri], next = RANKS[ri + 1];
     const pct = next ? Math.round(((S.xp - cur[0]) / (next[0] - cur[0])) * 100) : 100;
-    const tab = { learn: "learn", m: "learn", q: "learn", play: "play", sim: "play", signal: "play", sort: "play", jargon: "play", exam: "play", kit: "kit", me: "me" }[head] || "learn";
-    const nav = [["learn", "Learn"], ["play", "Play"], ["kit", "Field Kit"], ["me", "Profile"]];
+    const tab = { learn: "learn", m: "learn", q: "learn", play: "play", sim: "play", signal: "play", sort: "play", jargon: "play", exam: "play", kit: "kit", me: "me", board: "board" }[head] || "learn";
+    const nav = [["learn", "Learn"], ["play", "Play"], ["kit", "Field Kit"], ["board", "Leaderboard"], ["me", "Profile"]];
     $("#top").innerHTML = `
       <div class="top-in">
         <a class="brand" href="#learn"><span class="brand-el">Ai</span><span class="brand-name">AI Fluency Academy</span></a>
@@ -168,7 +208,7 @@
             <a class="btn primary" href="#${n.href}">${n.label}</a>
             <span class="muted">${done} of ${MODULES.length} modules passed</span>
           </div>
-          ${S.name ? "" : `<form class="namer" data-form="name"><label for="name-in">Your name, for the certificate</label><div class="row"><input id="name-in" maxlength="40" autocomplete="name" placeholder="First and last name"><button class="btn small">Save</button></div></form>`}
+          ${S.name ? "" : `<form class="namer" data-form="name"><label for="name-in">Your name, for the certificate and the team leaderboard</label><div class="row"><input id="name-in" maxlength="40" autocomplete="name" placeholder="First and last name"><button class="btn small">Save</button></div></form>`}
         </div>
       </section>
 
@@ -522,6 +562,51 @@
       <p class="hint">Content reviewed ${CONTENT_DATE}. AI products change monthly, so say "as of the last I saw" and confirm what the client actually has.</p>`;
   }
 
+  /* ---------- Leaderboard ---------- */
+
+  function loadBoard() {
+    board.loading = true; board.error = false;
+    (S.name ? syncNow() : Promise.resolve())
+      .then(() => rpc("ai_academy_leaderboard", { p_key: S.key || null }))
+      .then(rows => { board.rows = rows || []; }, () => { board.error = true; })
+      .then(() => { board.loading = false; if (route() === "board") { const el = $("#board-body"); if (el) el.innerHTML = boardBody(); } });
+  }
+
+  function boardBody() {
+    if (board.loading && !board.rows) return `<p class="muted">Loading the leaderboard…</p>`;
+    if (board.error && !board.rows) return `<p class="note">The leaderboard could not be reached. Check your connection and try again. Your progress is still saved on this device.</p>`;
+    const rows = board.rows || [];
+    if (!rows.length) return `<p class="muted">Nobody is on the board yet. Add your name and finish a briefing to be first.</p>`;
+    const certified = rows.filter(r => r.certified_on).length;
+    return `
+      <div class="stats">
+        <div><b>${rows.length}</b><span>People training</span></div>
+        <div><b>${certified}</b><span>Certified</span></div>
+        <div><b>${esc(rows[0].name)}</b><span>Leading with ${rows[0].xp} XP</span></div>
+      </div>
+      <div class="board-wrap"><table class="board">
+        <thead><tr><th>#</th><th>Name</th><th>Rank</th><th class="num">XP</th><th class="num">Modules</th><th class="num">Badges</th><th>Certified</th></tr></thead>
+        <tbody>${rows.map((r, i) => `<tr class="${r.is_me ? "me" : ""}">
+          <td class="num pos">${i + 1}</td>
+          <td><b>${esc(r.name)}</b>${r.is_me ? ` <span class="you">You</span>` : ""}</td>
+          <td>${RANKS[rankIndex(r.xp)][1]}</td>
+          <td class="num">${r.xp}</td>
+          <td class="num">${r.modules_passed} / ${MODULES.length}</td>
+          <td class="num">${r.badges}</td>
+          <td>${r.certified_on ? esc(r.certified_on) : `<span class="muted">Not yet</span>`}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>`;
+  }
+
+  function vBoard() {
+    loadBoard();
+    return `<h1 class="page-h">Leaderboard</h1>
+      <p class="sec-sub">Everyone on the team who has entered a name, ranked by XP. Scores update as people train.</p>
+      ${S.name ? "" : `<form class="namer board-namer" data-form="name"><label for="name-in">Add your name to join the board</label><div class="row"><input id="name-in" maxlength="40" autocomplete="name" placeholder="First and last name"><button class="btn small">Join</button></div></form>`}
+      <div id="board-body">${boardBody()}</div>
+      <div class="row reset"><button class="btn small" data-act="boardRefresh">Refresh</button></div>`;
+  }
+
   /* ---------- Profile ---------- */
 
   function vMe() {
@@ -541,11 +626,11 @@
       <h2 class="sec">Badges</h2>
       <div class="badges">${BADGES.map(b => `<div class="badge ${S.badges[b.id] ? "on" : ""}"><b>${b.name}</b><span>${b.desc}</span>${S.badges[b.id] ? `<span class="badge-date">Earned ${S.badges[b.id]}</span>` : ""}</div>`).join("")}</div>
       <h2 class="sec">Settings</h2>
-      <form class="namer" data-form="name"><label for="name-in">Name on your certificate</label><div class="row"><input id="name-in" maxlength="40" autocomplete="name" value="${esc(S.name)}" placeholder="First and last name"><button class="btn small">Save</button></div></form>
+      <form class="namer" data-form="name"><label for="name-in">Name on your certificate and the team leaderboard</label><div class="row"><input id="name-in" maxlength="40" autocomplete="name" value="${esc(S.name)}" placeholder="First and last name"><button class="btn small">Save</button></div></form>
       <div class="row reset">${G && G.type === "reset"
         ? `<span>Erase all progress on this device?</span><button class="btn small danger" data-act="resetYes">Yes, erase</button><button class="btn small" data-act="resetNo">Keep it</button>`
         : `<button class="btn small" data-act="resetAsk">Reset my progress</button>`}</div>
-      <p class="hint">Progress is saved in this browser only.</p>`;
+      <p class="hint">Progress is saved in this browser. Once you enter a name, your name and scores are also shared on the team leaderboard.</p>`;
   }
 
   /* ---------- actions ---------- */
@@ -622,9 +707,10 @@
       try { navigator.clipboard.writeText(text).then(done, () => toast("Copy is blocked here. Select the text instead.")); }
       catch (e) { toast("Copy is blocked here. Select the text instead."); }
     },
+    boardRefresh() { loadBoard(); toast("Refreshing"); },
     resetAsk() { G = { type: "reset" }; rerenderKeepScroll(); },
     resetNo() { G = null; rerenderKeepScroll(); },
-    resetYes() { const name = S.name; S = blank(); S.name = name; S.last = today(); S.streak = 1; G = null; save(); toast("Progress erased"); go("learn"); }
+    resetYes() { const name = S.name, key = S.key; S = blank(); S.name = name; S.key = key; S.last = today(); S.streak = 1; G = null; save(); toast("Progress erased"); go("learn"); }
   };
 
   function rerenderKeepScroll() { const y = window.scrollY; render(); window.scrollTo(0, y); }

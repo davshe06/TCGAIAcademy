@@ -26,8 +26,22 @@ It also works on GitHub Pages or any static host.
   15-question Certification Exam.
 - **Field Kit**: per-discipline client questions, candidate questions, signals, tools and
   objection handlers, with copy buttons. Meant to be opened before a call.
-- **Progress**: XP, seven ranks, ten badges, a day streak and a certificate. Saved in the
-  browser's `localStorage`; there is no shared leaderboard or backend.
+- **Progress**: XP, seven ranks, ten badges, a day streak and a certificate, saved in the
+  browser's `localStorage`.
+- **Leaderboard**: once someone enters a name, their name, XP, modules passed, badge count and
+  certification date are sent to a shared team board.
+
+## Leaderboard backend
+
+The board is stored in Supabase (table `ai_academy_players`). The table is private; the browser
+only calls two database functions, `ai_academy_submit` and `ai_academy_leaderboard`, using the
+publishable key in the `BOARD` constant at the top of `app.js`. To point at a different Supabase
+project, recreate the table and functions there and change `BOARD`.
+
+Each browser gets a random private key that identifies its row, so a person who switches
+browser or device appears as a second entry. Scores are reported by the browser and are not
+verified server-side, so treat the board as motivation, not as an audit record. To remove an
+entry, delete its row from `ai_academy_players` in the Supabase dashboard.
 
 ## Keeping content current
 
