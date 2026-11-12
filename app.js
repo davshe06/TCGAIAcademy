@@ -572,30 +572,42 @@
       .then(() => { board.loading = false; if (route() === "board") { const el = $("#board-body"); if (el) el.innerHTML = boardBody(); } });
   }
 
+  const nameHue = n => { let h = 0; for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) % 360; return h; };
+  const initials = n => n.trim().split(/\s+/).slice(0, 2).map(w => w[0] || "").join("").toUpperCase() || "?";
+  const avatar = n => `<span class="lb-av" style="--h:${nameHue(n)}" aria-hidden="true">${esc(initials(n))}</span>`;
+  const certMark = r => (r.certified_on ? `<span class="lb-cert" title="Certified ${esc(r.certified_on)}">Certified</span>` : "");
+
   function boardBody() {
     if (board.loading && !board.rows) return `<p class="muted">Loading the leaderboard…</p>`;
     if (board.error && !board.rows) return `<p class="note">The leaderboard could not be reached. Check your connection and try again. Your progress is still saved on this device.</p>`;
     const rows = board.rows || [];
     if (!rows.length) return `<p class="muted">Nobody is on the board yet. Add your name and finish a briefing to be first.</p>`;
     const certified = rows.filter(r => r.certified_on).length;
+    const top = Math.max(1, rows[0].xp);
+    const podium = rows.length >= 3 ? rows.slice(0, 3) : [];
+    const rest = rows.slice(podium.length);
+    const me = rows.findIndex(r => r.is_me);
     return `
-      <div class="stats">
-        <div><b>${rows.length}</b><span>People training</span></div>
-        <div><b>${certified}</b><span>Certified</span></div>
-        <div><b>${esc(rows[0].name)}</b><span>Leading with ${rows[0].xp} XP</span></div>
-      </div>
-      <div class="board-wrap"><table class="board">
-        <thead><tr><th>#</th><th>Name</th><th>Rank</th><th class="num">XP</th><th class="num">Modules</th><th class="num">Badges</th><th>Certified</th></tr></thead>
-        <tbody>${rows.map((r, i) => `<tr class="${r.is_me ? "me" : ""}">
-          <td class="num pos">${i + 1}</td>
-          <td><b>${esc(r.name)}</b>${r.is_me ? ` <span class="you">You</span>` : ""}</td>
-          <td>${RANKS[rankIndex(r.xp)][1]}</td>
-          <td class="num">${r.xp}</td>
-          <td class="num">${r.modules_passed} / ${MODULES.length}</td>
-          <td class="num">${r.badges}</td>
-          <td>${r.certified_on ? esc(r.certified_on) : `<span class="muted">Not yet</span>`}</td>
-        </tr>`).join("")}</tbody>
-      </table></div>`;
+      <p class="lb-sum"><b>${rows.length}</b> ${rows.length === 1 ? "person" : "people"} training<span>·</span><b>${certified}</b> certified${me >= 0 ? `<span>·</span>You are <b>#${me + 1}</b>` : ""}</p>
+      ${podium.length ? `<ol class="lb-podium">${podium.map((r, i) => `
+        <li class="lb-top p${i + 1} ${r.is_me ? "me" : ""}">
+          <span class="lb-medal">${i + 1}</span>
+          ${avatar(r.name)}
+          <b class="lb-name">${esc(r.name)}${r.is_me ? ` <span class="you">You</span>` : ""}</b>
+          <span class="lb-rank">${RANKS[rankIndex(r.xp)][1]}</span>
+          <span class="lb-big">${r.xp.toLocaleString()}<small> XP</small></span>
+          <span class="lb-meta">${r.modules_passed}/${MODULES.length} modules · ${r.badges} ${r.badges === 1 ? "badge" : "badges"}</span>
+          ${certMark(r)}
+        </li>`).join("")}</ol>` : ""}
+      ${rest.length ? `<ol class="lb-list" start="${podium.length + 1}">${rest.map((r, i) => `
+        <li class="lb-row ${r.is_me ? "me" : ""}">
+          <span class="lb-pos">${i + 1 + podium.length}</span>
+          ${avatar(r.name)}
+          <span class="lb-who"><b class="lb-name">${esc(r.name)}${r.is_me ? ` <span class="you">You</span>` : ""}</b><span class="lb-rank">${RANKS[rankIndex(r.xp)][1]} · ${r.modules_passed}/${MODULES.length} modules · ${r.badges} ${r.badges === 1 ? "badge" : "badges"}</span></span>
+          ${certMark(r)}
+          <span class="lb-bar" aria-hidden="true"><i style="width:${Math.max(2, Math.round((r.xp / top) * 100))}%"></i></span>
+          <span class="lb-xp">${r.xp.toLocaleString()} XP</span>
+        </li>`).join("")}</ol>` : ""}`;
   }
 
   function vBoard() {
